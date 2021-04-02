@@ -1,0 +1,284 @@
+---
+title: "NYC_One/Two_Family_Home_predic"
+author: "Ping Chao Mamiya"
+date: "3/29/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+# This project is to predict the condos price across New York City (NYC). The main predictor is the size of a condo, which is measured by the square-feet.
+# We also wanted to understand whether this prediction varies depending on the boroughs in NYC.
+# If there is error in data entry that affects the model prediction, we will devise our model to imporve the performance.
+```
+
+
+
+```{r}
+#Step 1
+library(readxl)
+library(tidyverse)
+library(broom)
+Manhatton<-read_excel("/Users/pcmamiya/Documents/DataQuest/Project6/rollingsales_manhattan.xls", skip = 4, col_names = TRUE)
+Bronx<-read_excel("/Users/pcmamiya/Documents/DataQuest/Project6/rollingsales_bronx.xls", skip = 4, col_names = TRUE)
+Brooklyn<-read_excel("/Users/pcmamiya/Documents/DataQuest/Project6/rollingsales_brooklyn.xls", skip = 4, col_names = TRUE)
+Statenisland<-read_excel("/Users/pcmamiya/Documents/DataQuest/Project6/rollingsales_statenisland.xls", skip = 4, col_names = TRUE)
+Queens<-read_excel("/Users/pcmamiya/Documents/DataQuest/Project6/rollingsales_queens.xls", skip = 4, col_names = TRUE)
+
+NYC_property_sales<-rbind(Manhatton, Bronx, Brooklyn, Statenisland, Queens)
+NYC_property_sales<-NYC_property_sales%>%
+  mutate(BOROUGH = if_else(BOROUGH =="1", "Manhattan",
+                           if_else(BOROUGH == "2", "Bronx",
+                                   if_else(BOROUGH == "3", "Brooklyn",
+                                           if_else(BOROUGH == "4", "Queens", "Staten Island")))))
+
+  names(NYC_property_sales) <- colnames(NYC_property_sales)%>%
+  str_replace_all("\\s", "_")%>%
+    tolower() 
+    #str_to_title()
+
+  NYC_property_sales<-NYC_property_sales%>%
+    distinct() %>%
+    select(-c("ease-ment", "apartment_number")) %>%
+    drop_na("gross_square_feet", "sale_price") %>%
+    filter(gross_square_feet != 0)
+    
+    
+  NYC_property_sales<-NYC_property_sales%>%
+    arrange(borough, neighborhood)
+  
+  write_csv(NYC_property_sales, path = "NYC_property_sales.csv")
+```
+
+
+
+```{r}
+#Step 2
+#In the latest 2020 dataset, "R4" condos do not have any entry in the "gross_square_feet" due to the pandemic. Therefore, the following analysis will use D6, elevator apartment, fireproof with stores.
+ NYC_FamilyHome<-NYC_property_sales%>%
+    filter(building_class_at_time_of_sale == "A5" | building_class_at_time_of_sale == "B1" | building_class_at_time_of_sale == "B2" | building_class_at_time_of_sale ==  "B3" | building_class_at_time_of_sale == "B9") 
+
+```
+
+
+
+```{r}
+#Step 3
+
+NYC_FamilyHome%>%
+  #filter(sale_price<9999999, sale_price > 10, gross_square_feet < 10000) %>%
+  ggplot(aes(x=gross_square_feet, y=sale_price)) +
+  geom_point(alpha = 0.85) +
+  scale_y_continuous(labels = scales::comma) +
+  geom_smooth(method = lm) +
+  xlab("gross square feet") +
+  ylab("sale price") +
+  facet_wrap(~borough, scales = "free", ncol = 2)
+```
+Initial plots revealed that there are a few outliers in the Bronx, Brooklyn and Manhattan.
+
+
+```{r}
+#Investigationg outliers
+NYC_FamilyHome%>%
+  filter(borough=="Bronx" & sale_price > 75000000)
+
+
+# This reveals two properties that are listed at the same address, with idential sale price.
+# A plausible intepretation that they are sold together and the listed sale price is the total amount for both of them, not a single properties. Therefore, this amount does not accurately reflect the true sale price value in the region. -> remove from the dataset.
+
+
+NYC_FamilyHome%>%
+  filter(borough=="Bronx" & sale_price < 1000)
+
+#Interesting, there are plenty of properties sold for $0 or less than $1,000 for over 1,000 square feet. Those data points are outliers and should be removed in the dataset.
+
+NYC_FamilyHome%>%
+  filter(borough=="Brooklyn" & sale_price > 10000000)
+
+# This reveals two properties that are listed two addresses right next to each other, with idential sale price.
+# Just like the properties in Bronx, it is plausible that they were sold together and the listed sale price is the total amount for both of them, not a single properties. Therefore, this amount does not accurately reflect the true sale price value in the region. -> remove from the dataset.
+
+NYC_FamilyHome%>%
+  filter(borough=="Brooklyn" & sale_price < 1000)
+
+#Interesting, there are plenty of properties sold for $0 or less than $1,000 for over 1,000 square feet. Those data points are outliers and should be removed in the dataset.
+
+NYC_FamilyHome%>%
+  filter(borough=="Manhattan" & sale_price > 30000000)
+
+#This returned a property in the West Village in Manhattan. It was on the Curbed New York news because the developer turned the apartment building to singular townhouse. Thus, it is likely the sold price is the total of the entire building, not a single apartment. 
+#According to Zillow's listing, the current sale price for a singular family townhouse is below $15,000,000. -> remove it from the dataset.
+
+#Additional data cleaning step includes examining duplicated entries
+NYC_FamilyHome%>%
+  group_by(sale_price, sale_date, borough)%>%
+  #filter(n()>=2)%>%
+  arrange(desc(sale_price))
+```
+
+These data cleaning steps led to consistent findings. That is:
+1. Two properties in Bronx and two properties in Brooklyn that wer sold on the same date and the same price.
+2. The listed sold price is likley the total amount, not the single sale price, for the transaction.
+3. There are a few properties in NYC that were sold for less than $1,000 for over 1,000 square feet. Although the exact reason is unknown, it is highly unlikely these properties were sold way below the market values.
+3. Based on these results, we can confidently remove these entries in the dataframe.
+
+
+```{r}
+NYC_FamilyHome%>%
+  filter(sale_price<9999999, sale_price > 10, borough != "Bronx") %>%
+  ggplot(aes(x=gross_square_feet, y=sale_price)) +
+  geom_point(alpha = 0.85) +
+  scale_y_continuous(labels = scales::comma) +
+  geom_smooth(method = lm, se=TRUE) +
+  xlab("gross square feet") +
+  ylab("sale price") +
+  facet_wrap(~borough, scales = "free", ncol = 2) +
+  ggtitle("Sale price for one- and two-family house in NYC")
+
+#The plot for Bronx needs to be separatedly plotted because the sale price of the two outliers is within the range of sale price in other boroughs.
+NYC_FamilyHome%>%
+  filter(sale_price<2000000, sale_price > 10, borough=="Bronx") %>%
+  ggplot(aes(x=gross_square_feet, y=sale_price)) +
+  geom_point(alpha = 0.85) +
+  scale_y_continuous(labels = scales::comma) +
+  geom_smooth(method = lm, se=TRUE) +
+  xlab("gross square feet") +
+  ylab("sale price") +
+  facet_wrap(~borough, scales = "free", ncol = 2) +
+  ggtitle("Sale price for one- and two-family house in Bronx")
+```
+
+
+After removing the outliers,
+This scatterplot depicts the sale price per square feet for one-family and two-family houses in New York City. There are several noticable features in this scatterplot.
+1. The price range varies greatly among the boroughs. Monhattan is the top whereas the Bronx is the lowests.
+2. The square-feet range is fairly consistent across five boroughs. There are a few bigg properties in Brooklyn. Most of the properties are between 1,000 - 4,000 sqaure feet.
+3. The relationship between the sale price and the gross-square-feet is positive across give boroughs. In Bronx, the relationship seems to be less robust compared to other four boroughs. Overall, the larger the property is, the sale price is higher in NYC.
+
+
+
+
+```{r}
+#Save the cleaned dataframe
+cleaned_NYC_FamilyHome<-NYC_FamilyHome%>%
+  filter(sale_price<9999999, sale_price > 10)
+
+#Making a predictive model with orig dataframe
+NYC_FamilyHome_lm<-lm(sale_price~gross_square_feet, data = NYC_FamilyHome)
+summary(NYC_FamilyHome_lm)
+
+#Making a predictive model with cleaned dataframe
+cleaned_NYC_FamilyHome_lm<-lm(sale_price~gross_square_feet, data = cleaned_NYC_FamilyHome)
+summary(cleaned_NYC_FamilyHome_lm)
+
+confint(NYC_FamilyHome_lm)
+confint(cleaned_NYC_FamilyHome_lm)
+
+sigma(NYC_FamilyHome_lm)
+sigma(cleaned_NYC_FamilyHome_lm)
+```
+
+
+There are several noticable differences in the predictive models based on the original and cleaned dataframes.
+1. Estimates(beta). estimates appear to differ greatly between two models. In the original model, every gross square feet explains $189.16 changes in the sale price. In the cleaned model, every square feet explains $389.915 changes in the sale price. This suggests that the sale price reflect by the gross square feet more in the cleaned dataframe than the origianl dataframe.
+2. Confidence interval. In the original model, the estimate ($189.16) has a confidence interval between $163.77 and $214.55. The difference between the estimate and the lower bound is $189.16 - $163.77 = $25.39, and the difference between the estimate and upper bound is $214.55 - $189.16 = $25.39. In the cleaned model, the estimate ($389.915) has a confidence interval between $375.15 and $404.68. The difference between the estimate and the lower bound is $389.915 - $375.15 = $14. This difference is much smaller than the difference in the original model, indicating that a higher accuracy in predicting the sale price with the gross square feet in the cleaned model.
+3. Residual standard error (RSE). Consistently, the RSE in the original model is 1178557 whereas the RSE in the cleaned model is 494878. Smaller RSE suggests less error between the predicted versus the actual sale price.
+4. R-squared. Finally, the R-squared in the original model is much smaller in the R-squared in the cleaned model. The R-squared represents the total variance of the sale price that can be explained by the gross sale price. Although both model significantly predicted the sale price, the cleaned model explained 22% of the total variance whereas the original model only explaiend 1.3% of the total variance in the sale price. Altogether, these results indicate that the cleaned model provides more accurate prediction. This is likely due to the removal of outliers in the original dataframe.
+
+
+
+```{r}
+#Build different linear model for each borough and compare them using the broom and tidyverse packages
+cleaned_NYC_FamilyHome_nested<-cleaned_NYC_FamilyHome%>%
+  group_by(borough)%>%
+  nest()%>%
+  mutate(cleaned_NYC_FamilyHome_byBorough = map(.x = data,
+                            .f = ~lm(sale_price ~ gross_square_feet,
+                                                data = .))) %>%
+  mutate(coefficient_estimates = map(.x = cleaned_NYC_FamilyHome_byBorough,
+                                     .f = tidy,
+                                     conf.int = TRUE))
+```
+
+
+```{r}
+#extracting Bronxs' linear model and its coefficients
+#cleaned_NYC_FamilyHome_nested$coefficient_estimates[1]
+#cleaned_NYC_FamilyHome_nested$cleaned_NYC_FamilyHome_byBorough
+
+
+cleaned_NYC_FamilyHome_stats<-cleaned_NYC_FamilyHome%>%
+  group_by(borough)%>%
+  nest()%>%
+  mutate(cleaned_NYC_FamilyHome_byBorough = map(.x = data,
+                            .f = ~lm(sale_price ~ gross_square_feet,
+                                                data = .))) %>%
+  mutate(summary_stats = map(.x = cleaned_NYC_FamilyHome_byBorough,
+                                     .f = glance)) %>%
+  mutate(coefficient_estimates = map(.x = cleaned_NYC_FamilyHome_byBorough,
+                                     .f = tidy,
+                                     conf.int = TRUE))%>%
+  mutate(augmented_stats = map(.x = cleaned_NYC_FamilyHome_byBorough,
+                               .y = data,
+                               .f = augment))
+
+cleaned_NYC_FamilyHome_summary_stats<-cleaned_NYC_FamilyHome_stats%>%
+  select(borough, summary_stats)%>%
+  unnest(cols = summary_stats)
+
+#To show the coefficients for gross_square_feet in five boroughs.
+cleaned_NYC_FamilyHome_coefficients<-cleaned_NYC_FamilyHome_stats%>%
+  select(borough, coefficient_estimates)%>%
+  unnest(coefficient_estimates) %>%
+  filter(term == "gross_square_feet")
+
+#To return augmented dataframes to a single dataframe.
+cleaned_NYC_FamilyHome_augment<-cleaned_NYC_FamilyHome_stats%>%
+  select(borough, augmented_stats) %>%
+  unnest(augmented_stats)
+```
+
+Based on the cleaned_NYC_FamilyHome_coefficients results, we learn the following few things:
+1. the sale price per gross square feet is the least in Bronx, then Staten Island, Queens, Brooklyn, and finally, Manhattan.
+2. the predictive models signfiicantly predict the sale price in all five boroughs. The t-statistics show that the observed estimates were much greater than 2.01 at the significant level of 0.05, indicating the chance of wrongly predicting the sale price is below 5%. Thus, we can confidently reject the null hypothesis that the gross squre feet do not predict the sale price in NYC. 
+
+Based on the cleaned_NYC_FamilyHome_summary_stats results, we also learn a few things:
+1. The predictive models explain a good portion of total variance in the sale price in NYC (R-squared). The predictive model in the Staten Island explained the highest total variance explained, followed by Manhattan, Brooklyn, Queens, and Bronx. Similarly, the predictive model in the Staten Island also provides the most stable prediction because of its smallest sigma among five boroughs. Although R-squared in the predictive model for Manhattan is the second highest, its sigma is the highest among all five boroughs. This suggest that this predictive model is less stable because of its high variability.
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
